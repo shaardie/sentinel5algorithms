@@ -9,6 +9,12 @@ import logging
 import dateutil.parser
 from dateutil.relativedelta import relativedelta
 import gdal
+import numpy as np
+
+
+from sklearn.cluster import DBSCAN
+from sklearn import metrics
+
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -39,9 +45,35 @@ class RawData():
             f'HDF5:{ncfile}:{RawData.DELTA_TIME_NAME}').ReadAsArray()
         self.meta_data = gdal.Open(f'{ncfile}').GetMetadata_Dict()
 
+    def clustering(self):
+        X = np.zeros((self.data.size, 4))
+        X[:, 0] = self.data.flatten()
+        X[:, 1] = self.longitude.flatten()
+        X[:, 2] = self.latitude.flatten()
+
+        time_array = np.ones(self.data.shape)
+        for index, time in enumerate(self.deltatime[0, :]):
+            time_array[index, :] = time
+        X[:, 3] = time_array.flatten()
+        db = DBSCAN().fit(X)
+
+        core_samples_mask = np.zeros_like(db.labels_, dtype=bool)
+        core_samples_mask[db.core_sample_indices_] = True
+        labels = db.labels_
+
+        # Number of clusters in labels, ignoring noise if present.
+        n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
+        n_noise_ = list(labels).count(-1)
+
+        print('Estimated number of clusters: %d' % n_clusters_)
+        print('Estimated number of noise points: %d' % n_noise_)
+        print("Silhouette Coefficient: %0.3f" % metrics.silhouette_score(
+            X, labels))
+
 
 class Point():
     """Represents a single point with data from the Satellite"""
+
     def __init__(self, longitude, latitude, value, timestamp, quality):
         self.longitude = longitude
         self.latitude = latitude
@@ -59,6 +91,7 @@ class Point():
 class Scan():
     """Object to hold arrays from an nc file.
     """
+
     def __init__(self, filepath):
         self.filepath = filepath
         self.raw_data = RawData(filepath)
